@@ -136,7 +136,11 @@ export const getAllConversations = async (): Promise<Conversation[]> => {
     const request = store.getAll()
 
     request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result || [])
+    request.onsuccess = () => {
+      const items = (request.result || []) as Conversation[]
+      items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      resolve(items)
+    }
   })
 }
 
@@ -161,7 +165,11 @@ export const getMessages = async (conversationId: string): Promise<Message[]> =>
     const request = index.getAll(conversationId)
 
     request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result || [])
+    request.onsuccess = () => {
+      const items = (request.result || []) as Message[]
+      items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      resolve(items)
+    }
   })
 }
 
