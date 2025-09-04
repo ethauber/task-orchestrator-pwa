@@ -2,29 +2,34 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Task } from '@/types'
+import { Task, Conversation, Message } from '@/types'
+import { getConversations, createConversation, getMessages, addMessage } from '@/lib/idb'
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
 
-export default function Home() {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [newTask, setNewTask] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [llmResponse, setLlmResponse] = useState('')
-  const [isLoadingLLM, setIsLoadingLLM] = useState(false)
-  const [streaming, setStreaming] = useState(false)
-  const streamRef = useRef<AbortController | null>(null)
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
-  const [isOnline, setIsOnline] = useState(true)
+  export default function Home() {
+    const [tasks, setTasks] = useState<Task[]>([])
+    const [newTask, setNewTask] = useState('')
+    const [prompt, setPrompt] = useState('')
+    const [llmResponse, setLlmResponse] = useState('')
+    const [isLoadingLLM, setIsLoadingLLM] = useState(false)
+    const [streaming, setStreaming] = useState(false)
+    const streamRef = useRef<AbortController | null>(null)
+    const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+    const [isOnline, setIsOnline] = useState(true)
+    const [conversations, setConversations] = useState<Conversation[]>([])
+    const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+    const [messages, setMessages] = useState<Message[]>([])
 
-  useEffect(() => {
-    loadTasks()
-    setupInstallPrompt()
-    setupOnlineStatus()
-  }, [])
+    useEffect(() => {
+      loadTasks()
+      setupInstallPrompt()
+      setupOnlineStatus()
+      loadConversations()
+    }, [])
 
   const setupInstallPrompt = () => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -104,13 +109,43 @@ export default function Home() {
       const response = await fetch(`/api/tasks?id=${id}`, {
         method: 'DELETE'
       })
-      
+
       if (response.ok) {
         loadTasks()
       }
     } catch (error) {
       console.error('Failed to delete task:', error)
     }
+  }
+
+  const loadConversations = async () => {
+    const loaded = await getConversations()
+    setConversations(loaded)
+    if (loaded.length > 0) {
+      const first = loaded[0]
+      setActiveConversationId(first.id)
+      const msgs = await getMessages(first.id)
+      setMessages(msgs)
+    } else {
+      await newConversation()
+    }
+  }
+
+  const selectConversation = async (id: string) => {
+    setActiveConversationId(id)
+    const msgs = await getMessages(id)
+    setMessages(msgs)
+  }
+
+  const newConversation = async () => {
+    const conv: Conversation = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString()
+    }
+    await createConversation(conv)
+    setConversations(prev => [conv, ...prev])
+    setActiveConversationId(conv.id)
+    setMessages([])
   }
 
   const installApp = async () => {
@@ -129,10 +164,32 @@ export default function Home() {
 
   const suggestTasks = async (useStream = true) => {
     if (!prompt.trim()) return
+
+    let convId = activeConversationId
+    if (!convId) {
+      convId = crypto.randomUUID()
+      const conv: Conversation = { id: convId, createdAt: new Date().toISOString() }
+      await createConversation(conv)
+      setConversations(prev => [conv, ...prev])
+      setActiveConversationId(convId)
+      setMessages([])
+    }
+
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      conversationId: convId,
+      role: 'user',
+      content: prompt,
+      createdAt: new Date().toISOString()
+    }
+    await addMessage(userMsg)
+    setMessages(prev => [...prev, userMsg])
+    setPrompt('')
     setLlmResponse('')
     setIsLoadingLLM(true)
 
     const tasksPayload = tasks.map(t => ({ id: t.id, text: t.text, completed: t.completed, createdAt: t.createdAt }))
+    const history = [...messages, userMsg].map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
     try {
       if (useStream) {
@@ -142,10 +199,11 @@ export default function Home() {
         const res = await fetch('/api/llm/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            messages: [{ role: 'user', content: prompt }],
-            includeTasks: true, 
-            tasks: tasksPayload 
+          body: JSON.stringify({
+            conversationId: convId,
+            messages: history,
+            includeTasks: true,
+            tasks: tasksPayload
           }),
           signal: ac.signal
         })
@@ -153,24 +211,50 @@ export default function Home() {
 
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
+        let text = ''
         while (true) {
           const { value, done } = await reader.read()
           if (done) break
-          setLlmResponse(prev => prev + decoder.decode(value))
+          const chunk = decoder.decode(value)
+          text += chunk
+          setLlmResponse(prev => prev + chunk)
         }
+        const assistantMsg: Message = {
+          id: crypto.randomUUID(),
+          conversationId: convId,
+          role: 'assistant',
+          content: text,
+          createdAt: new Date().toISOString()
+        }
+        await addMessage(assistantMsg)
+        setMessages(prev => [...prev, assistantMsg])
+        setLlmResponse('')
       } else {
         const res = await fetch('/api/llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            messages: [{ role: 'user', content: prompt }],
-            includeTasks: true, 
-            tasks: tasksPayload 
+          body: JSON.stringify({
+            conversationId: convId,
+            messages: history,
+            includeTasks: true,
+            tasks: tasksPayload
           })
         })
         const data = await res.json()
-        if (res.ok) setLlmResponse(data.message?.content || data.text || 'No response')
-        else setLlmResponse(data.error ?? 'LLM error')
+        if (res.ok) {
+          const text = data.message?.content || data.text || 'No response'
+          const assistantMsg: Message = {
+            id: crypto.randomUUID(),
+            conversationId: convId,
+            role: 'assistant',
+            content: text,
+            createdAt: new Date().toISOString()
+          }
+          await addMessage(assistantMsg)
+          setMessages(prev => [...prev, assistantMsg])
+        } else {
+          setLlmResponse(data.error ?? 'LLM error')
+        }
       }
     } catch {
       setLlmResponse('LLM request failed. Make sure Ollama is running.')
@@ -187,7 +271,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
+      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6">
         <h1 className="text-2xl font-bold text-center mb-6">Task Orchestrator</h1>
         
         {/* Install App Button */}
@@ -249,36 +333,74 @@ export default function Home() {
         {/* LLM Integration */}
         <div className="border-t pt-4">
           <h3 className="font-semibold mb-2">LLM Task Suggestions</h3>
-          <div className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ask for task suggestions..."
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoadingLLM}
-              aria-busy={isLoadingLLM}
-            />
-            <button
-              onClick={() => suggestTasks(true)}
-              disabled={isLoadingLLM}
-              className={`px-4 py-2 rounded-lg text-white ${isLoadingLLM ? 'bg-purple-400' : 'bg-purple-600 hover:bg-purple-700'}`}
-              aria-busy={isLoadingLLM}
-            >
-              {isLoadingLLM ? 'Thinking…' : 'Ask'}
-            </button>
-            {streaming && (
-              <button onClick={cancelStream} className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300">
-                Stop
+          <div className="flex gap-4 h-96">
+            <div className="w-1/3 overflow-y-auto border-r pr-2">
+              <button
+                onClick={newConversation}
+                className="w-full mb-2 bg-blue-600 text-white py-1 rounded-lg hover:bg-blue-700"
+              >
+                + New
               </button>
-            )}
-          </div>
-          {llmResponse && (
-            <div className="bg-gray-100 p-3 rounded-lg text-sm whitespace-pre-wrap" role="status">
-              <strong>LLM Response:</strong>{' '}
-              {llmResponse || <span className="animate-pulse">…</span>}
+              <div className="space-y-1">
+                {conversations.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => selectConversation(c.id)}
+                    className={`w-full text-left p-2 rounded-lg ${c.id === activeConversationId ? 'bg-gray-300' : 'bg-gray-100 hover:bg-gray-200'}`}
+                  >
+                    {c.title || new Date(c.createdAt).toLocaleDateString()}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
+            <div className="flex-1 flex flex-col">
+              <div className="flex-1 overflow-y-auto mb-2 space-y-2">
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`p-2 rounded-lg text-sm whitespace-pre-wrap ${m.role === 'assistant' ? 'bg-blue-50 text-blue-800' : 'bg-gray-100'}`}
+                  >
+                    <strong>{m.role === 'assistant' ? 'Assistant' : 'User'}:</strong> {m.content}
+                  </div>
+                ))}
+                {streaming && llmResponse && (
+                  <div className="p-2 rounded-lg text-sm whitespace-pre-wrap bg-blue-50 text-blue-800">
+                    <strong>Assistant:</strong> {llmResponse}
+                  </div>
+                )}
+                {!streaming && llmResponse && (
+                  <div className="p-2 rounded-lg text-sm text-red-600 whitespace-pre-wrap">
+                    {llmResponse}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && suggestTasks(true)}
+                  placeholder="Type your message..."
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isLoadingLLM}
+                  aria-busy={isLoadingLLM}
+                />
+                <button
+                  onClick={() => suggestTasks(true)}
+                  disabled={isLoadingLLM}
+                  className={`px-4 py-2 rounded-lg text-white ${isLoadingLLM ? 'bg-purple-400' : 'bg-purple-600 hover:bg-purple-700'}`}
+                  aria-busy={isLoadingLLM}
+                >
+                  {isLoadingLLM ? 'Thinking…' : 'Send'}
+                </button>
+                {streaming && (
+                  <button onClick={cancelStream} className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300">
+                    Stop
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
