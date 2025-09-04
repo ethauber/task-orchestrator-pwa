@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Task } from '@/types'
 
 export async function POST(request: NextRequest) {
   try {
     const { prompt, includeTasks, tasks, conversationId } = await request.json() as {
-      prompt: string; includeTasks?: boolean; tasks?: Array<{id:string;text:string;completed:boolean;createdAt:string}>; conversationId?: string
+      prompt: string; includeTasks?: boolean; tasks?: Task[]; conversationId?: string
     }
     if (!prompt) return NextResponse.json({ error: 'Prompt required' }, { status: 400 })
 

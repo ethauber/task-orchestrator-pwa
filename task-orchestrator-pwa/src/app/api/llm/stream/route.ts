@@ -1,9 +1,12 @@
 import { NextRequest } from 'next/server'
+import { Task } from '@/types'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
-  const { prompt, includeTasks, tasks, conversationId } = await req.json()
+  const { prompt, includeTasks, tasks, conversationId } = await req.json() as {
+    prompt: string; includeTasks?: boolean; tasks?: Task[]; conversationId?: string
+  }
   const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
   const modelName = process.env.MODEL_NAME || 'llama3.1'
 

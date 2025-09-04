@@ -8,6 +8,7 @@ export interface Task {
 export interface LLMRequest {
   prompt: string
   includeTasks?: boolean
+  tasks?: Task[]
   conversationId?: string
 }
 
