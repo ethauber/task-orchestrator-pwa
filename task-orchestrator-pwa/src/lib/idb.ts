@@ -1,9 +1,11 @@
-import { Task } from '@/types'
+import { Task, Conversation, Message } from '@/types'
 
 const DB_NAME = 'TaskOrchestratorDB'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const TASKS_STORE = 'tasks'
 const OUTBOX_STORE = 'outbox'
+const CONVERSATIONS_STORE = 'conversations'
+const MESSAGES_STORE = 'messages'
 
 let db: IDBDatabase | null = null
 
@@ -33,6 +35,15 @@ const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
         const outboxStore = db.createObjectStore(OUTBOX_STORE, { keyPath: 'id' })
         outboxStore.createIndex('timestamp', 'timestamp', { unique: false })
+      }
+
+      if (!db.objectStoreNames.contains(CONVERSATIONS_STORE)) {
+        db.createObjectStore(CONVERSATIONS_STORE, { keyPath: 'id' })
+      }
+
+      if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
+        const messagesStore = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' })
+        messagesStore.createIndex('conversationId', 'conversationId', { unique: false })
       }
     }
   })
@@ -112,5 +123,80 @@ export const clearOutbox = async (): Promise<void> => {
 
     request.onerror = () => reject(request.error)
     request.onsuccess = () => resolve()
+  })
+}
+
+export const getConversations = async (): Promise<Conversation[]> => {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([CONVERSATIONS_STORE], 'readonly')
+    const store = transaction.objectStore(CONVERSATIONS_STORE)
+    const request = store.getAll()
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || [])
+  })
+}
+
+export const createConversation = async (conversation: Conversation): Promise<void> => {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([CONVERSATIONS_STORE], 'readwrite')
+    const store = transaction.objectStore(CONVERSATIONS_STORE)
+    const request = store.put(conversation)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve()
+  })
+}
+
+export const getMessages = async (conversationId: string): Promise<Message[]> => {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([MESSAGES_STORE], 'readonly')
+    const store = transaction.objectStore(MESSAGES_STORE)
+    const index = store.index('conversationId')
+    const request = index.getAll(conversationId)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || [])
+  })
+}
+
+export const addMessage = async (message: Message): Promise<void> => {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([MESSAGES_STORE], 'readwrite')
+    const store = transaction.objectStore(MESSAGES_STORE)
+    const request = store.put(message)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve()
+  })
+}
+
+export const deleteConversation = async (id: string): Promise<void> => {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([CONVERSATIONS_STORE, MESSAGES_STORE], 'readwrite')
+    const conversationsStore = transaction.objectStore(CONVERSATIONS_STORE)
+    const messagesStore = transaction.objectStore(MESSAGES_STORE)
+
+    conversationsStore.delete(id)
+
+    const index = messagesStore.index('conversationId')
+    const cursorRequest = index.openCursor(IDBKeyRange.only(id))
+
+    cursorRequest.onerror = () => reject(cursorRequest.error)
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result
+      if (cursor) {
+        cursor.delete()
+        cursor.continue()
+      }
+    }
+
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
   })
 }
