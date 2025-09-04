@@ -11,6 +11,13 @@ const urlsToCache = [
   '/icons/icon-512x512.png'
 ];
 
+// Don't cache Next.js static assets - let them load normally
+const STATIC_ASSETS = [
+  '/_next/static/',
+  '/_next/webpack-hmr',
+  '/_next/on-demand-entries'
+];
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -19,11 +26,27 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+  
+  // Skip caching for Next.js static assets and API routes
+  if (STATIC_ASSETS.some(path => url.pathname.startsWith(path)) || 
+      url.pathname.startsWith('/api/') ||
+      url.pathname.startsWith('/_next/')) {
+    return;
+  }
+  
+  // For other requests, try cache first, then network
   event.respondWith(
-    caches.match(event.request)
+    caches.match(request)
       .then((response) => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request);
+        return response || fetch(request);
+      })
+      .catch(() => {
+        // If both cache and network fail, return a basic offline page
+        if (request.destination === 'document') {
+          return caches.match('/');
+        }
       })
   );
 });
