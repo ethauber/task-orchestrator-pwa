@@ -2,9 +2,12 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { getAllTasks, upsertTask, deleteTask } from '@/lib/idb'
-import { syncOutbox } from '@/lib/net'
 import { Task } from '@/types'
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
 
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([])
@@ -14,7 +17,7 @@ export default function Home() {
   const [isLoadingLLM, setIsLoadingLLM] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const streamRef = useRef<AbortController | null>(null)
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isOnline, setIsOnline] = useState(true)
 
   useEffect(() => {
@@ -26,16 +29,13 @@ export default function Home() {
   const setupInstallPrompt = () => {
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault()
-      setDeferredPrompt(e)
+      setDeferredPrompt(e as BeforeInstallPromptEvent)
     })
   }
 
   const setupOnlineStatus = () => {
     const updateOnlineStatus = () => {
       setIsOnline(navigator.onLine)
-      if (navigator.onLine) {
-        syncOutbox()
-      }
     }
     
     window.addEventListener('online', updateOnlineStatus)
@@ -44,37 +44,73 @@ export default function Home() {
   }
 
   const loadTasks = async () => {
-    const loadedTasks = await getAllTasks()
-    setTasks(loadedTasks)
+    try {
+      const response = await fetch('/api/tasks')
+      if (response.ok) {
+        const loadedTasks = await response.json()
+        setTasks(loadedTasks)
+      }
+    } catch (error) {
+      console.error('Failed to load tasks:', error)
+    }
   }
 
   const addTask = async () => {
     if (!newTask.trim()) return
     
-    const task: Task = {
-      id: Date.now().toString(),
+    const task = {
       text: newTask.trim(),
       completed: false,
       createdAt: new Date().toISOString()
     }
     
-    await upsertTask(task)
-    setNewTask('')
-    loadTasks()
+    try {
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', task })
+      })
+      
+      if (response.ok) {
+        setNewTask('')
+        loadTasks()
+      }
+    } catch (error) {
+      console.error('Failed to add task:', error)
+    }
   }
 
   const toggleTask = async (id: string) => {
     const task = tasks.find(t => t.id === id)
     if (task) {
-      task.completed = !task.completed
-      await upsertTask(task)
-      loadTasks()
+      try {
+        const response = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'toggle', task })
+        })
+        
+        if (response.ok) {
+          loadTasks()
+        }
+      } catch (error) {
+        console.error('Failed to toggle task:', error)
+      }
     }
   }
 
   const removeTask = async (id: string) => {
-    await deleteTask(id)
-    loadTasks()
+    try {
+      const response = await fetch(`/api/tasks?id=${id}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        loadTasks()
+      }
+    } catch (error) {
+      console.error('Failed to delete task:', error)
+    }
   }
 
   const installApp = async () => {
@@ -106,7 +142,11 @@ export default function Home() {
         const res = await fetch('/api/llm/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, includeTasks: true, tasks: tasksPayload }),
+          body: JSON.stringify({ 
+            messages: [{ role: 'user', content: prompt }],
+            includeTasks: true, 
+            tasks: tasksPayload 
+          }),
           signal: ac.signal
         })
         if (!res.ok || !res.body) throw new Error('Stream failed')
@@ -122,13 +162,17 @@ export default function Home() {
         const res = await fetch('/api/llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, includeTasks: true, tasks: tasksPayload })
+          body: JSON.stringify({ 
+            messages: [{ role: 'user', content: prompt }],
+            includeTasks: true, 
+            tasks: tasksPayload 
+          })
         })
         const data = await res.json()
-        if (res.ok) setLlmResponse(data.text)
+        if (res.ok) setLlmResponse(data.message?.content || data.text || 'No response')
         else setLlmResponse(data.error ?? 'LLM error')
       }
-    } catch (e) {
+    } catch {
       setLlmResponse('LLM request failed. Make sure Ollama is running.')
     } finally {
       setIsLoadingLLM(false)

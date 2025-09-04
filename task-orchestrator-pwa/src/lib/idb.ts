@@ -1,5 +1,16 @@
 import { Task, Conversation, Message } from '@/types'
 
+interface OutboxAction {
+  type: string
+  payload: unknown
+}
+
+interface OutboxItem {
+  id: string
+  action: OutboxAction
+  timestamp: number
+}
+
 const DB_NAME = 'TaskOrchestratorDB'
 const DB_VERSION = 2
 const TASKS_STORE = 'tasks'
@@ -85,12 +96,12 @@ export const deleteTask = async (id: string): Promise<void> => {
   })
 }
 
-export const addToOutbox = async (action: { type: string; payload: any }): Promise<void> => {
+export const addToOutbox = async (action: OutboxAction): Promise<void> => {
   const database = await initDB()
   return new Promise((resolve, reject) => {
     const transaction = database.transaction([OUTBOX_STORE], 'readwrite')
     const store = transaction.objectStore(OUTBOX_STORE)
-    const outboxItem = {
+    const outboxItem: OutboxItem = {
       id: Date.now().toString(),
       action,
       timestamp: Date.now()
@@ -102,7 +113,7 @@ export const addToOutbox = async (action: { type: string; payload: any }): Promi
   })
 }
 
-export const getOutbox = async (): Promise<any[]> => {
+export const getOutbox = async (): Promise<OutboxItem[]> => {
   const database = await initDB()
   return new Promise((resolve, reject) => {
     const transaction = database.transaction([OUTBOX_STORE], 'readonly')

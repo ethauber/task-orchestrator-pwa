@@ -5,6 +5,13 @@ interface Message {
   content: string
 }
 
+interface Task {
+  id: string
+  text: string
+  completed: boolean
+  createdAt: string
+}
+
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
@@ -12,7 +19,7 @@ export async function POST(req: NextRequest) {
     conversationId?: string
     messages?: Message[]
     includeTasks?: boolean
-    tasks?: Array<{ id: string; text: string; completed: boolean; createdAt: string }>
+    tasks?: Task[]
   }
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -26,7 +33,7 @@ export async function POST(req: NextRequest) {
 
   const system = 'You suggest concrete, deduplicated next actions based on current tasks when provided.'
   const taskContext = includeTasks && Array.isArray(tasks)
-    ? `\n\nCurrent tasks:\n${tasks.slice(0,20).map((t:any) => `- [${t.completed?'x':' '}] ${t.text}`).join('\n')}`
+    ? `\n\nCurrent tasks:\n${tasks.slice(0,20).map((t: Task) => `- [${t.completed?'x':' '}] ${t.text}`).join('\n')}`
     : ''
 
   const history = messages
