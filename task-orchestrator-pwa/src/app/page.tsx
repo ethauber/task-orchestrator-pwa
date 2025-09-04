@@ -271,7 +271,7 @@ interface BeforeInstallPromptEvent extends Event {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
+      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6">
         <h1 className="text-2xl font-bold text-center mb-6">Task Orchestrator</h1>
         
         {/* Install App Button */}
@@ -333,8 +333,8 @@ interface BeforeInstallPromptEvent extends Event {
         {/* LLM Integration */}
         <div className="border-t pt-4">
           <h3 className="font-semibold mb-2">LLM Task Suggestions</h3>
-          <div className="flex gap-4">
-            <div className="w-1/3">
+          <div className="flex gap-4 h-96">
+            <div className="w-1/3 overflow-y-auto border-r pr-2">
               <button
                 onClick={newConversation}
                 className="w-full mb-2 bg-blue-600 text-white py-1 rounded-lg hover:bg-blue-700"
