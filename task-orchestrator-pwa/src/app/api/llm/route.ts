@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       conversationId: convId,
+      text: text,
       message: { role: 'assistant', content: text }
     })
   } catch (error) {

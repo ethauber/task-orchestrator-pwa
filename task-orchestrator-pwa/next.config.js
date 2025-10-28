@@ -18,15 +18,6 @@ const nextConfig = {
       },
     ]
   },
-  // Service worker and PWA assets
-  async rewrites() {
-    return [
-      {
-        source: '/sw.js',
-        destination: '/api/sw',
-      },
-    ]
-  },
   experimental: {
     webVitalsAttribution: ['CLS','LCP','FID','FCP','TTFB'],
   },

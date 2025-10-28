@@ -16,14 +16,14 @@ export interface LLMResponse {
 
 export interface Conversation {
   id: string
-  title?: string
+  title: string
   createdAt: string
 }
 
 export interface Message {
   id: string
   conversationId: string
-  role: string
+  role: 'user' | 'assistant' | 'system'
   content: string
   createdAt: string
 }

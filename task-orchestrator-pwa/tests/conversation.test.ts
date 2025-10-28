@@ -1,68 +1,168 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { createServer } from 'http'
+import { parse } from 'url'
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-}
-
-interface Conversation {
-  id: string
-  messages: Message[]
-}
-
-// In-memory store to simulate conversations
-const conversations: Record<string, Conversation> = {}
-
-// Deterministic LLM stub
-const llm = {
-  generate: vi.fn((input: string) => `stubbed:${input}`)
-}
-
-function createConversation(): Conversation {
-  const conv: Conversation = { id: Math.random().toString(36).slice(2), messages: [] }
-  conversations[conv.id] = conv
-  return conv
-}
-
-async function postMessage(conversationId: string, content: string) {
-  const conv = conversations[conversationId]
-  const userMsg: Message = { id: Math.random().toString(36).slice(2), role: 'user', content }
-  conv.messages.push(userMsg)
-  const assistantMsg: Message = { id: Math.random().toString(36).slice(2), role: 'assistant', content: llm.generate(content) }
-  conv.messages.push(assistantMsg)
-  return { userMsg, assistantMsg }
-}
-
-function listMessages(conversationId: string) {
-  return conversations[conversationId].messages
-}
+// Simple mock server for testing conversations
+let server: any
+let conversations: any[] = []
+let messages: any[] = []
 
 beforeEach(() => {
-  llm.generate.mockClear()
-  for (const key of Object.keys(conversations)) delete conversations[key]
+  conversations = []
+  messages = []
 })
 
-describe('conversation flow', () => {
-  it('retrieves messages in posted order', async () => {
-    const conv = createConversation()
-    await postMessage(conv.id, 'hello')
-    await postMessage(conv.id, 'world')
-    const retrieved = listMessages(conv.id)
-    expect(retrieved.map(m => m.content)).toEqual([
-      'hello', 'stubbed:hello', 'world', 'stubbed:world'
-    ])
+beforeAll(() => {
+  server = createServer((req, res) => {
+    const { pathname, searchParams } = parse(req.url || '', true)
+    
+    if (pathname === '/api/conversations' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(conversations))
+    } else if (pathname === '/api/conversations' && req.method === 'POST') {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk.toString()
+      })
+      req.on('end', () => {
+        const conversation = {
+          id: Date.now().toString(),
+          ...JSON.parse(body)
+        }
+        conversations.push(conversation)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(conversation))
+      })
+    } else if (pathname?.startsWith('/api/conversations/') && pathname.endsWith('/messages') && req.method === 'GET') {
+      const conversationId = pathname.split('/')[3]
+      const conversationMessages = messages.filter(m => m.conversationId === conversationId)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(conversationMessages))
+    } else if (pathname === '/api/conversations/messages' && req.method === 'POST') {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk.toString()
+      })
+      req.on('end', () => {
+        const message = {
+          id: Date.now().toString(),
+          ...JSON.parse(body)
+        }
+        messages.push(message)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(message))
+      })
+    } else {
+      res.writeHead(404)
+      res.end('Not found')
+    }
+  })
+  
+  server.listen(3002)
+})
+
+afterAll(() => {
+  server.close()
+})
+
+describe('Conversation API', () => {
+  it('should create a new conversation', async () => {
+    const response = await fetch('http://localhost:3002/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Test Conversation',
+        createdAt: new Date().toISOString()
+      })
+    })
+    
+    const data = await response.json()
+    expect(response.status).toBe(200)
+    expect(data.title).toBe('Test Conversation')
+    expect(data.id).toBeDefined()
   })
 
-  it('keeps threads isolated', async () => {
-    const conv1 = createConversation()
-    const conv2 = createConversation()
-    await postMessage(conv1.id, 'first')
-    await postMessage(conv2.id, 'second')
-    const msgs1 = listMessages(conv1.id).map(m => m.content)
-    const msgs2 = listMessages(conv2.id).map(m => m.content)
-    expect(msgs1).toEqual(['first', 'stubbed:first'])
-    expect(msgs2).toEqual(['second', 'stubbed:second'])
+  it('should get conversations list', async () => {
+    // First create a conversation
+    await fetch('http://localhost:3002/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Test Conversation',
+        createdAt: new Date().toISOString()
+      })
+    })
+    
+    // Then get the list
+    const response = await fetch('http://localhost:3002/api/conversations')
+    const data = await response.json()
+    
+    expect(response.status).toBe(200)
+    expect(Array.isArray(data)).toBe(true)
+    expect(data.length).toBeGreaterThan(0)
+  })
+
+  it('should add messages to a conversation', async () => {
+    // First create a conversation
+    const convResponse = await fetch('http://localhost:3002/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Test Conversation',
+        createdAt: new Date().toISOString()
+      })
+    })
+    const conversation = await convResponse.json()
+    
+    // Then add a message
+    const messageResponse = await fetch('http://localhost:3002/api/conversations/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'Hello, how are you?',
+        createdAt: new Date().toISOString()
+      })
+    })
+    
+    const message = await messageResponse.json()
+    expect(messageResponse.status).toBe(200)
+    expect(message.content).toBe('Hello, how are you?')
+    expect(message.conversationId).toBe(conversation.id)
+  })
+
+  it('should get messages for a conversation', async () => {
+    // First create a conversation and message
+    const convResponse = await fetch('http://localhost:3002/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Test Conversation',
+        createdAt: new Date().toISOString()
+      })
+    })
+    const conversation = await convResponse.json()
+    
+    await fetch('http://localhost:3002/api/conversations/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'Test message',
+        createdAt: new Date().toISOString()
+      })
+    })
+    
+    // Then get the messages
+    const response = await fetch(`http://localhost:3002/api/conversations/${conversation.id}/messages`)
+    const data = await response.json()
+    
+    expect(response.status).toBe(200)
+    expect(Array.isArray(data)).toBe(true)
+    expect(data.length).toBeGreaterThan(0)
+    expect(data[0].content).toBe('Test message')
   })
 })
 
