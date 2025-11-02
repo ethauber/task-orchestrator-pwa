@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+interface Task {
+  id: string
+  text: string
+  completed: boolean
+  createdAt: string
+}
+
 // In-memory store for demo purposes
-let tasks: any[] = []
+const tasks: Task[] = []
 
 export async function GET() {
   return NextResponse.json(tasks)
@@ -28,7 +35,7 @@ export async function POST(request: NextRequest) {
       default:
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
     }
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
   }
 }
@@ -49,7 +56,7 @@ export async function DELETE(request: NextRequest) {
     }
     
     return NextResponse.json({ error: 'Task not found' }, { status: 404 })
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
   }
 }
